@@ -1,0 +1,2184 @@
+<!DOCTYPE html>
+<html lang="ru" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>clip.local — Студийный захват и экспорт изображений из буфера обмена</title>
+  <!-- Шрифты Inter и JetBrains Mono -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', 'system-ui', '-apple-system', 'sans-serif'],
+            mono: ['JetBrains Mono', 'ui-monospace', 'SFMono-Regular', 'monospace'],
+          },
+        },
+      },
+    };
+  </script>
+  <style>
+    /* ==========================================================================
+       ДВУХРЕЖИМНАЯ ЦВЕТОВАЯ СИСТЕМА (SOFT GLASSMORPHISM)
+       ========================================================================== */
+    :root,
+    [data-theme="light"] {
+      --bg-base: #eef6fc;
+      --orb-1: rgba(56, 189, 248, 0.36);
+      --orb-2: rgba(14, 165, 233, 0.28);
+      --orb-3: rgba(125, 211, 252, 0.42);
+      --orb-4: rgba(34, 211, 238, 0.24);
+
+      --glass-bg: rgba(255, 255, 255, 0.62);
+      --glass-bg-strong: rgba(255, 255, 255, 0.78);
+      --glass-bg-subtle: rgba(255, 255, 255, 0.44);
+      --glass-border: rgba(2, 132, 199, 0.28);
+      --glass-border-dashed: rgba(2, 132, 199, 0.45);
+      --glass-highlight: inset 0 1px 1px rgba(255, 255, 255, 0.95);
+      --glass-shadow: 0 8px 32px -6px rgba(14, 116, 179, 0.11);
+
+      --accent: #0284c7;
+      --accent-hover: #0369a1;
+      --accent-text: #ffffff;
+      --accent-soft: rgba(2, 132, 199, 0.12);
+
+      --text-primary: #0b192c;
+      --text-secondary: #2c4a6e;
+      --text-muted: #527399;
+
+      --input-bg: rgba(255, 255, 255, 0.72);
+      --tilt-glare: rgba(255, 255, 255, 0.65);
+      --checker-a: rgba(2, 132, 199, 0.08);
+      --checker-b: rgba(255, 255, 255, 0.55);
+    }
+
+    [data-theme="dark"] {
+      --bg-base: #070708;
+      --orb-1: rgba(113, 113, 122, 0.18);
+      --orb-2: rgba(82, 82, 91, 0.20);
+      --orb-3: rgba(161, 161, 170, 0.14);
+      --orb-4: rgba(63, 63, 70, 0.22);
+
+      --glass-bg: rgba(20, 20, 23, 0.68);
+      --glass-bg-strong: rgba(24, 24, 28, 0.84);
+      --glass-bg-subtle: rgba(16, 16, 19, 0.52);
+      --glass-border: rgba(161, 161, 170, 0.22);
+      --glass-border-dashed: rgba(161, 161, 170, 0.35);
+      --glass-highlight: inset 0 1px 1px rgba(255, 255, 255, 0.09);
+      --glass-shadow: 0 10px 36px -6px rgba(0, 0, 0, 0.65);
+
+      --accent: #e4e4e7;
+      --accent-hover: #ffffff;
+      --accent-text: #09090b;
+      --accent-soft: rgba(228, 228, 231, 0.12);
+
+      --text-primary: #f4f4f5;
+      --text-secondary: #a1a1aa;
+      --text-muted: #71717a;
+
+      --input-bg: rgba(14, 14, 17, 0.75);
+      --tilt-glare: rgba(255, 255, 255, 0.09);
+      --checker-a: rgba(255, 255, 255, 0.05);
+      --checker-b: rgba(12, 12, 14, 0.65);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      background-color: var(--bg-base);
+      color: var(--text-primary);
+      font-family: 'Inter', system-ui, -apple-system, sans-serif;
+      transition: background-color 0.35s ease, color 0.35s ease;
+      overflow-x: hidden;
+    }
+
+    /* ==========================================================================
+       АНИМИРОВАННЫЙ РАЗМЫТЫЙ ФОН (AMBIENT BACKGROUND)
+       ========================================================================== */
+    .ambient-layer {
+      position: fixed;
+      inset: 0;
+      z-index: -1;
+      pointer-events: none;
+      overflow: hidden;
+    }
+
+    .ambient-orb {
+      position: absolute;
+      border-radius: 9999px;
+      filter: blur(85px);
+      will-change: transform;
+      transition: background-color 0.5s ease;
+    }
+
+    .orb-1 {
+      width: 44vw;
+      height: 44vw;
+      min-width: 340px;
+      min-height: 340px;
+      top: -10%;
+      left: -8%;
+      background: var(--orb-1);
+      animation: drift-1 22s ease-in-out infinite alternate;
+    }
+
+    .orb-2 {
+      width: 40vw;
+      height: 40vw;
+      min-width: 320px;
+      min-height: 320px;
+      top: 18%;
+      right: -10%;
+      background: var(--orb-2);
+      animation: drift-2 26s ease-in-out infinite alternate;
+    }
+
+    .orb-3 {
+      width: 46vw;
+      height: 46vw;
+      min-width: 360px;
+      min-height: 360px;
+      bottom: -14%;
+      left: 18%;
+      background: var(--orb-3);
+      animation: drift-3 28s ease-in-out infinite alternate;
+    }
+
+    .orb-4 {
+      width: 34vw;
+      height: 34vw;
+      min-width: 280px;
+      min-height: 280px;
+      bottom: 8%;
+      right: 14%;
+      background: var(--orb-4);
+      animation: drift-4 20s ease-in-out infinite alternate;
+    }
+
+    @keyframes drift-1 {
+      0% { transform: translate(0, 0) scale(1); }
+      100% { transform: translate(6vw, 5vh) scale(1.08); }
+    }
+    @keyframes drift-2 {
+      0% { transform: translate(0, 0) scale(1.04); }
+      100% { transform: translate(-7vw, 6vh) scale(0.95); }
+    }
+    @keyframes drift-3 {
+      0% { transform: translate(0, 0) scale(0.96); }
+      100% { transform: translate(5vw, -6vh) scale(1.06); }
+    }
+    @keyframes drift-4 {
+      0% { transform: translate(0, 0) scale(1); }
+      100% { transform: translate(-5vw, -5vh) scale(1.07); }
+    }
+
+    /* Текстура плёночного зерна */
+    .film-grain {
+      position: absolute;
+      inset: 0;
+      opacity: 0.03;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+    }
+
+    /* ==========================================================================
+       СТЕКЛЯННЫЕ ПОВЕРХНОСТИ И ЭЛЕМЕНТЫ УПРАВЛЕНИЯ
+       ========================================================================== */
+    .glass-panel {
+      background: var(--glass-bg);
+      backdrop-filter: blur(22px) saturate(185%);
+      -webkit-backdrop-filter: blur(22px) saturate(185%);
+      border: 1px solid var(--glass-border);
+      box-shadow: var(--glass-highlight), var(--glass-shadow);
+      transition: background-color 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease;
+    }
+
+    .glass-header {
+      background: var(--glass-bg-strong);
+      backdrop-filter: blur(24px) saturate(190%);
+      -webkit-backdrop-filter: blur(24px) saturate(190%);
+      border-bottom: 1px solid var(--glass-border);
+      box-shadow: var(--glass-highlight);
+    }
+
+    .glass-subtle {
+      background: var(--glass-bg-subtle);
+      border: 1px solid var(--glass-border);
+      box-shadow: var(--glass-highlight);
+    }
+
+    .glass-input,
+    .glass-select {
+      background: var(--input-bg);
+      border: 1px solid var(--glass-border);
+      color: var(--text-primary);
+      box-shadow: var(--glass-highlight);
+      transition: border-color 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease;
+    }
+
+    .glass-input:focus,
+    .glass-select:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-soft);
+    }
+
+    /* Кастомная стрелка для селектов с отступом pr-8 */
+    .glass-select {
+      appearance: none;
+      background-repeat: no-repeat;
+      background-position: right 0.65rem center;
+      background-size: 1rem 1rem;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%2364748b' stroke-width='2'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' d='M19 9l-7 7-7-7'/%3E%3C/svg%3E");
+    }
+
+    .btn-accent {
+      background: var(--accent);
+      color: var(--accent-text);
+      transition: background-color 0.2s ease, transform 0.15s ease, box-shadow 0.2s ease;
+    }
+
+    .btn-accent:hover {
+      background: var(--accent-hover);
+    }
+
+    .btn-accent:active {
+      transform: scale(0.98);
+    }
+
+    .btn-glass {
+      background: var(--glass-bg);
+      border: 1px solid var(--glass-border);
+      color: var(--text-primary);
+      box-shadow: var(--glass-highlight);
+      transition: background-color 0.2s ease, border-color 0.2s ease, transform 0.15s ease;
+    }
+
+    .btn-glass:hover {
+      background: var(--glass-bg-strong);
+      border-color: var(--accent);
+    }
+
+    .btn-glass:active {
+      transform: scale(0.98);
+    }
+
+    /* ==========================================================================
+       3D HOVER TILT ДЛЯ ГЛАВНОЙ ЗОНЫ ВСТАВКИ
+       ========================================================================== */
+    .tilt-stage {
+      perspective: 1100px;
+    }
+
+    .tilt-card {
+      position: relative;
+      transform-style: preserve-3d;
+      transition: transform 0.18s cubic-bezier(0.22, 1, 0.36, 1), border-color 0.25s ease, box-shadow 0.25s ease;
+      border: 1.5px dashed var(--glass-border-dashed);
+      background: var(--glass-bg);
+      backdrop-filter: blur(22px) saturate(185%);
+      -webkit-backdrop-filter: blur(22px) saturate(185%);
+      box-shadow: var(--glass-highlight), var(--glass-shadow);
+      overflow: hidden;
+    }
+
+    .tilt-card.is-resetting {
+      transition: transform 0.5s cubic-bezier(0.22, 1, 0.36, 1), border-color 0.25s ease, box-shadow 0.25s ease;
+    }
+
+    .tilt-glare {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.25s ease;
+      background: radial-gradient(
+        circle 340px at var(--glare-x, 50%) var(--glare-y, 50%),
+        var(--tilt-glare),
+        transparent 75%
+      );
+      z-index: 1;
+    }
+
+    .tilt-card:hover .tilt-glare {
+      opacity: 1;
+    }
+
+    .tilt-z-1 {
+      transform: translateZ(18px);
+    }
+
+    .tilt-z-2 {
+      transform: translateZ(30px);
+    }
+
+    /* ==========================================================================
+       ПОДЛОЖКИ ПРОЗРАЧНОСТИ В ОБЛАСТИ ПРЕДПРОСМОТРА
+       ========================================================================== */
+    .bg-checkerboard {
+      background-color: var(--checker-b);
+      background-image:
+        linear-gradient(45deg, var(--checker-a) 25%, transparent 25%),
+        linear-gradient(-45deg, var(--checker-a) 25%, transparent 25%),
+        linear-gradient(45deg, transparent 75%, var(--checker-a) 75%),
+        linear-gradient(-45deg, transparent 75%, var(--checker-a) 75%);
+      background-size: 20px 20px;
+      background-position: 0 0, 0 10px, 10px -10px, -10px 0;
+    }
+
+    .bg-surface-light {
+      background-color: #f8fafc;
+    }
+
+    .bg-surface-dark {
+      background-color: #09090b;
+    }
+
+    /* Стилизация ползунков (Range) */
+    input[type="range"].studio-slider {
+      -webkit-appearance: none;
+      appearance: none;
+      height: 6px;
+      border-radius: 9999px;
+      background: var(--accent-soft);
+      border: 1px solid var(--glass-border);
+      cursor: pointer;
+    }
+
+    input[type="range"].studio-slider::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 16px;
+      height: 16px;
+      border-radius: 9999px;
+      background: var(--accent);
+      border: 2px solid var(--bg-base);
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
+      transition: transform 0.15s ease;
+    }
+
+    input[type="range"].studio-slider::-webkit-slider-thumb:hover {
+      transform: scale(1.15);
+    }
+
+    input[type="range"].studio-slider:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+
+    /* Тонкий скроллбар */
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: var(--glass-border);
+      border-radius: 9999px;
+    }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col selection:bg-sky-500 selection:text-white">
+
+  <!-- Анимированный размытый фон с 4 радиальными сферами и зерном -->
+  <div class="ambient-layer" aria-hidden="true">
+    <div class="ambient-orb orb-1"></div>
+    <div class="ambient-orb orb-2"></div>
+    <div class="ambient-orb orb-3"></div>
+    <div class="ambient-orb orb-4"></div>
+    <div class="film-grain"></div>
+  </div>
+
+  <!-- Скрытый input для выбора файла с диска -->
+  <input id="file-input" type="file" accept="image/*" multiple class="hidden" />
+
+  <!-- ========================================================================
+       1. ЛИПКАЯ СТЕКЛЯННАЯ ШАПКА (HEADER, ВЫСОТА 64PX)
+       ======================================================================== -->
+  <header class="glass-header sticky top-0 z-30 h-16">
+    <div class="mx-auto flex h-full max-w-7xl items-center justify-between px-4 sm:px-6">
+      <!-- Слева: лаконичный моноширинный логотип без иконок -->
+      <a href="#" class="font-mono text-base font-bold tracking-tight sm:text-lg" style="color: var(--text-primary);">
+        clip.local
+      </a>
+
+      <!-- Справа: два компактных переключателя-капсулы (RU|EN и СВЕТЛАЯ|ТЁМНАЯ) -->
+      <div class="flex items-center gap-2 sm:gap-3">
+        <!-- Переключатель языка (RU | EN) -->
+        <div
+          class="glass-subtle flex h-9 items-center rounded-full p-0.5 font-mono text-xs font-semibold"
+          role="group"
+          aria-label="Language switcher"
+        >
+          <button
+            type="button"
+            data-lang-btn="ru"
+            class="lang-btn rounded-full px-2.5 py-1 transition"
+          >
+            RU
+          </button>
+          <button
+            type="button"
+            data-lang-btn="en"
+            class="lang-btn rounded-full px-2.5 py-1 transition"
+          >
+            EN
+          </button>
+        </div>
+
+        <!-- Переключатель темы (СВЕТЛАЯ с солнцем | ТЁМНАЯ с луной) -->
+        <div
+          class="glass-subtle flex h-9 items-center rounded-full p-0.5 font-mono text-[11px] font-semibold tracking-wide"
+          role="group"
+          aria-label="Theme switcher"
+        >
+          <button
+            type="button"
+            data-theme-btn="light"
+            class="theme-btn flex items-center gap-1.5 rounded-full px-2.5 py-1 transition"
+          >
+            <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
+            </svg>
+            <span data-i18n="themeLight">СВЕТЛАЯ</span>
+          </button>
+          <button
+            type="button"
+            data-theme-btn="dark"
+            class="theme-btn flex items-center gap-1.5 rounded-full px-2.5 py-1 transition"
+          >
+            <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
+            </svg>
+            <span data-i18n="themeDark">ТЁМНАЯ</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- ОСНОВНОЙ КОНТЕЙНЕР -->
+  <main class="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-6 px-4 py-7 sm:px-6 sm:py-9">
+
+    <!-- ======================================================================
+         2. ВЕРХНИЙ ЗАГОЛОВОЧНЫЙ БЛОК (HERO)
+         ====================================================================== -->
+    <section class="flex flex-col items-center text-center">
+      <h1
+        data-i18n="heroTitle"
+        class="whitespace-nowrap font-bold tracking-tight"
+        style="font-size: clamp(1.1rem, 2.7vw, 2.25rem); color: var(--text-primary);"
+      >
+        Студийный захват и экспорт изображений из буфера обмена
+      </h1>
+      <p
+        data-i18n="heroSubtitle"
+        class="mt-2.5 max-w-[48rem] text-sm leading-relaxed sm:text-base"
+        style="color: var(--text-secondary);"
+      >
+        Мгновенная вставка снимков экрана по Ctrl+V / Cmd+V, проверка прозрачности альфа-канала, ресайз, конвертация в PNG / JPEG / WebP и пакетное сохранение прямо в браузере.
+      </p>
+    </section>
+
+    <!-- ======================================================================
+         3. ПАНЕЛЬ ФИЛЬТРОВ ИСТОРИИ И КНОПКА СПРАВОЧНИКА (ВЫСОТА 42PX)
+         ====================================================================== -->
+    <section class="flex flex-wrap items-center justify-between gap-3">
+      <!-- Слева: стеклянная капсула с вкладками фильтрации и живым счётчиком -->
+      <div
+        class="glass-panel flex h-[42px] items-center gap-1 rounded-full px-1.5 font-mono text-xs font-semibold"
+        role="tablist"
+      >
+        <button type="button" data-filter="ALL" class="filter-tab flex h-8 items-center gap-1.5 rounded-full px-3 transition">
+          <span data-i18n="filterAll">ВСЕ</span>
+          <span id="count-ALL" class="rounded-full px-1.5 py-0.5 text-[10px]">0</span>
+        </button>
+        <button type="button" data-filter="PNG" class="filter-tab flex h-8 items-center gap-1.5 rounded-full px-3 transition">
+          <span>PNG</span>
+          <span id="count-PNG" class="rounded-full px-1.5 py-0.5 text-[10px]">0</span>
+        </button>
+        <button type="button" data-filter="JPEG" class="filter-tab flex h-8 items-center gap-1.5 rounded-full px-3 transition">
+          <span>JPEG</span>
+          <span id="count-JPEG" class="rounded-full px-1.5 py-0.5 text-[10px]">0</span>
+        </button>
+        <button type="button" data-filter="WEBP" class="filter-tab flex h-8 items-center gap-1.5 rounded-full px-3 transition">
+          <span>WEBP</span>
+          <span id="count-WEBP" class="rounded-full px-1.5 py-0.5 text-[10px]">0</span>
+        </button>
+      </div>
+
+      <!-- Справа: стеклянная кнопка справочника (высота 42px) -->
+      <button
+        id="guide-modal-btn"
+        type="button"
+        class="btn-glass flex h-[42px] items-center gap-2 rounded-full px-4 text-xs font-semibold sm:text-sm"
+      >
+        <svg class="h-4 w-4 shrink-0" style="color: var(--accent);" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+        </svg>
+        <span data-i18n="guideBtn">Горячие клавиши и форматы</span>
+      </button>
+    </section>
+
+    <!-- ======================================================================
+         4. ГЛАВНАЯ ЗОНА ВСТАВКИ ИЗ БУФЕРА С 3D-ЭФФЕКТОМ (3D HOVER TILT)
+         ====================================================================== -->
+    <section class="tilt-stage">
+      <div id="tilt-dropzone" class="tilt-card is-resetting rounded-3xl p-5 sm:p-7">
+        <!-- Динамический блик, следующий за курсором -->
+        <div class="tilt-glare" aria-hidden="true"></div>
+
+        <div class="relative z-10 flex flex-col items-center justify-between gap-5 lg:flex-row">
+          <!-- Левая часть: иконка в стеклянной подложке + описание -->
+          <div class="flex flex-col items-center gap-4 text-center sm:flex-row sm:text-left">
+            <div
+              class="tilt-z-2 glass-subtle flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl"
+              style="color: var(--accent);"
+            >
+              <svg class="h-7 w-7" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
+              </svg>
+            </div>
+
+            <div class="tilt-z-1">
+              <div class="flex flex-wrap items-center justify-center gap-2 sm:justify-start">
+                <h2 data-i18n="dropTitle" class="text-base font-bold sm:text-lg" style="color: var(--text-primary);">
+                  Захват из буфера обмена или перетаскивание
+                </h2>
+                <span class="glass-subtle rounded-md px-2 py-0.5 font-mono text-[11px] font-semibold" style="color: var(--accent);">
+                  CTRL+V / CMD+V
+                </span>
+              </div>
+              <p data-i18n="dropHint" class="mt-1 text-xs sm:text-sm" style="color: var(--text-secondary);">
+                Нажмите Ctrl+V (Cmd+V) в любом месте страницы или перетащите файл сюда
+              </p>
+            </div>
+          </div>
+
+          <!-- Правая часть: кнопки вставки и выбора файла -->
+          <div class="tilt-z-2 flex w-full flex-col gap-2.5 sm:w-auto sm:flex-row">
+            <button
+              id="paste-clipboard-btn"
+              type="button"
+              class="btn-accent flex items-center justify-center gap-2 rounded-2xl px-5 py-3 text-sm font-semibold shadow-sm"
+            >
+              <svg class="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+              </svg>
+              <span data-i18n="pasteBtn">Вставить из буфера</span>
+            </button>
+
+            <button
+              id="select-file-btn"
+              type="button"
+              class="btn-glass flex items-center justify-center gap-2 rounded-2xl px-4 py-3 text-sm font-semibold"
+            >
+              <svg class="h-4 w-4 shrink-0" style="color: var(--text-secondary);" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+              </svg>
+              <span data-i18n="selectFileBtn">Выбрать файл с диска</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ======================================================================
+         5. ДВУХКОЛОНОЧНАЯ РАБОЧАЯ ОБЛАСТЬ (12-КОЛОНОЧНАЯ СЕТКА: 8 + 4)
+         ====================================================================== -->
+    <section class="grid grid-cols-1 gap-6 lg:grid-cols-12">
+
+      <!-- ВЕРХНЯЯ ПАНЕЛЬ ПАКЕТНЫХ ДЕЙСТВИЙ (НА ВСЮ ШИРИНУ 12 КОЛОНОК) -->
+      <div class="glass-panel flex flex-col justify-between gap-3 rounded-2xl px-4 py-3.5 sm:flex-row sm:items-center lg:col-span-12">
+        <!-- Слева: моноширинная сводка и выбор пакетного формата -->
+        <div class="flex flex-wrap items-center gap-3">
+          <div class="font-mono text-xs font-semibold tracking-tight sm:text-[13px]" style="color: var(--text-primary);">
+            <span data-i18n="summaryCaptures">СНИМКОВ:</span>
+            <span id="summary-count" style="color: var(--accent);">0</span>
+            <span class="mx-1.5 opacity-40">•</span>
+            <span data-i18n="summaryWeight">ОБЩИЙ ВЕС:</span>
+            <span id="summary-size" style="color: var(--accent);">0 KB</span>
+          </div>
+
+          <div class="flex items-center gap-2">
+            <label for="batch-format-select" data-i18n="batchFormatLabel" class="font-mono text-xs" style="color: var(--text-secondary);">
+              Скачать все в:
+            </label>
+            <select
+              id="batch-format-select"
+              class="glass-select rounded-xl py-1.5 pl-3 pr-8 font-mono text-xs font-semibold"
+            >
+              <option value="image/png">PNG</option>
+              <option value="image/jpeg">JPEG</option>
+              <option value="image/webp">WEBP</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Справа: кнопки Скачать активный, Скачать все, Очистить -->
+        <div class="flex flex-wrap items-center gap-2">
+          <button
+            id="batch-download-active-btn"
+            type="button"
+            class="btn-accent rounded-xl px-3.5 py-2 text-xs font-semibold"
+          >
+            <span data-i18n="downloadActiveBtn">Скачать активный</span>
+          </button>
+          <button
+            id="batch-download-all-btn"
+            type="button"
+            class="btn-glass rounded-xl px-3.5 py-2 text-xs font-semibold"
+          >
+            <span data-i18n="downloadAllBtn">Скачать все</span>
+          </button>
+          <button
+            id="clear-all-btn"
+            type="button"
+            class="btn-glass rounded-xl px-3.5 py-2 text-xs font-semibold hover:!border-rose-400 hover:!text-rose-500"
+          >
+            <span data-i18n="clearBtn">Очистить</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- ====================================================================
+           ЛЕВАЯ КОЛОНКА (8 ИЗ 12): АКТИВНЫЙ ПРЕДПРОСМОТР + ЛЕНТА СНИМКОВ
+           ==================================================================== -->
+      <div class="flex flex-col gap-6 lg:col-span-8">
+
+        <!-- Карточка активного изображения -->
+        <div class="glass-panel flex flex-col overflow-hidden rounded-3xl">
+          <!-- Шапка области предпросмотра: переключатель подложки + зум -->
+          <div class="flex flex-wrap items-center justify-between gap-2 border-b px-4 py-3 sm:px-5" style="border-color: var(--glass-border);">
+            <div class="flex items-center gap-2">
+              <span class="h-2 w-2 rounded-full" style="background: var(--accent);"></span>
+              <span data-i18n="previewHeader" class="font-mono text-xs font-semibold uppercase tracking-wider" style="color: var(--text-secondary);">
+                Активный холст
+              </span>
+              <span id="demo-badge" class="hidden rounded-md px-2 py-0.5 font-mono text-[10px] font-semibold" style="background: var(--accent-soft); color: var(--accent);">
+                DEMO SAMPLE
+              </span>
+            </div>
+
+            <div class="flex flex-wrap items-center gap-2">
+              <!-- Переключатель подложки прозрачности: Шахматная / Светлая / Тёмная -->
+              <div class="glass-subtle flex items-center rounded-xl p-0.5 font-mono text-[11px] font-medium">
+                <button type="button" data-backdrop="checker" class="backdrop-btn rounded-lg px-2 py-1 transition" data-i18n="bgChecker">
+                  Сетка
+                </button>
+                <button type="button" data-backdrop="light" class="backdrop-btn rounded-lg px-2 py-1 transition" data-i18n="bgLight">
+                  Светлый
+                </button>
+                <button type="button" data-backdrop="dark" class="backdrop-btn rounded-lg px-2 py-1 transition" data-i18n="bgDark">
+                  Тёмный
+                </button>
+              </div>
+
+              <!-- Переключатель масштаба: Вписать / 100% -->
+              <div class="glass-subtle flex items-center rounded-xl p-0.5 font-mono text-[11px] font-medium">
+                <button type="button" data-zoom="fit" class="zoom-btn rounded-lg px-2 py-1 transition" data-i18n="zoomFit">
+                  Вписать
+                </button>
+                <button type="button" data-zoom="100" class="zoom-btn rounded-lg px-2 py-1 transition">
+                  100%
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Область отображения самого изображения -->
+          <div
+            id="canvas-stage"
+            class="bg-checkerboard relative flex min-h-[300px] max-h-[520px] w-full items-center justify-center overflow-auto p-5 transition-colors duration-200 sm:min-h-[380px]"
+          >
+            <img
+              id="active-preview-img"
+              src=""
+              alt="Active clipboard capture"
+              class="max-h-[460px] max-w-full rounded-xl object-contain shadow-lg transition-all duration-200"
+            />
+            <!-- Пустое состояние холста (если пользователь очистил всё) -->
+            <div id="empty-canvas-placeholder" class="hidden flex-col items-center justify-center py-12 text-center">
+              <p data-i18n="emptyCanvasTitle" class="font-mono text-sm font-semibold" style="color: var(--text-secondary);">
+                ХОЛСТ ПУСТ
+              </p>
+              <p data-i18n="emptyCanvasHint" class="mt-1 text-xs" style="color: var(--text-muted);">
+                Нажмите Ctrl+V или выберите файл, чтобы начать работу
+              </p>
+            </div>
+          </div>
+
+          <!-- Нижняя строка метаданных активного изображения -->
+          <div
+            class="grid grid-cols-3 divide-x border-t px-3 py-3 text-center font-mono"
+            style="border-color: var(--glass-border); --tw-divide-opacity: 1;"
+          >
+            <div class="px-2" style="border-color: var(--glass-border);">
+              <p data-i18n="metaResLabel" class="text-[10px] uppercase tracking-wider" style="color: var(--text-muted);">
+                Габариты
+              </p>
+              <p id="active-meta-res" class="mt-0.5 text-xs font-semibold sm:text-sm" style="color: var(--text-primary);">
+                —
+              </p>
+            </div>
+            <div class="px-2" style="border-color: var(--glass-border);">
+              <p data-i18n="metaOrigLabel" class="text-[10px] uppercase tracking-wider" style="color: var(--text-muted);">
+                Исходник
+              </p>
+              <p id="active-meta-orig" class="mt-0.5 text-xs font-semibold sm:text-sm" style="color: var(--text-primary);">
+                —
+              </p>
+            </div>
+            <div class="px-2" style="border-color: var(--glass-border);">
+              <p data-i18n="metaOutLabel" class="text-[10px] uppercase tracking-wider" style="color: var(--text-muted);">
+                Расчётный вес
+              </p>
+              <p id="active-meta-out" class="mt-0.5 text-xs font-semibold sm:text-sm" style="color: var(--accent);">
+                —
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Лента карточек истории захваченных снимков за сессию -->
+        <div class="flex flex-col gap-3">
+          <div class="flex items-center justify-between px-1">
+            <h3 data-i18n="historyTitle" class="font-mono text-xs font-bold uppercase tracking-wider" style="color: var(--text-secondary);">
+              Захваченные снимки сессии
+            </h3>
+            <span id="history-filter-label" class="font-mono text-xs" style="color: var(--text-muted);">
+              ALL
+            </span>
+          </div>
+
+          <div id="history-cards-grid" class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <!-- Карточки снимков рендерятся через JS -->
+          </div>
+        </div>
+      </div>
+
+      <!-- ====================================================================
+           ПРАВАЯ КОЛОНКА (4 ИЗ 12, STICKY TOP-24): ПАРАМЕТРЫ ЭКСПОРТА
+           ==================================================================== -->
+      <aside class="lg:col-span-4">
+        <div class="glass-panel sticky top-24 flex flex-col gap-5 rounded-3xl p-5 sm:p-6">
+          <div class="flex items-center justify-between border-b pb-3.5" style="border-color: var(--glass-border);">
+            <h3 data-i18n="exportPanelTitle" class="text-base font-bold" style="color: var(--text-primary);">
+              Параметры экспорта
+            </h3>
+            <span class="font-mono text-[11px] font-semibold" style="color: var(--accent);">EXPORT</span>
+          </div>
+
+          <!-- Блок 1: Файл и формат -->
+          <div class="flex flex-col gap-3.5">
+            <span data-i18n="blockFileFormat" class="font-mono text-[11px] font-semibold uppercase tracking-wider" style="color: var(--text-muted);">
+              Файл и формат
+            </span>
+
+            <div>
+              <div class="mb-1.5 flex items-center justify-between">
+                <label for="export-filename" data-i18n="fileNameLabel" class="text-xs font-medium" style="color: var(--text-secondary);">
+                  Имя файла
+                </label>
+                <button
+                  id="refresh-timestamp-btn"
+                  type="button"
+                  data-i18n="refreshNameBtn"
+                  class="font-mono text-[11px] font-medium hover:underline"
+                  style="color: var(--accent);"
+                >
+                  Обновить время
+                </button>
+              </div>
+              <input
+                id="export-filename"
+                type="text"
+                placeholder="clip_2026-11-18_06-34-00"
+                class="glass-input w-full rounded-xl px-3.5 py-2.5 font-mono text-xs font-medium"
+              />
+            </div>
+
+            <div>
+              <label for="export-format" data-i18n="formatLabel" class="mb-1.5 block text-xs font-medium" style="color: var(--text-secondary);">
+                Формат сохранения
+              </label>
+              <select
+                id="export-format"
+                class="glass-select w-full rounded-xl py-2.5 pl-3.5 pr-8 font-mono text-xs font-semibold"
+              >
+                <option value="image/png">PNG — Lossless + Alpha</option>
+                <option value="image/jpeg">JPEG — Compact Photo</option>
+                <option value="image/webp">WebP — Modern Web</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Блок 2: Сжатие и масштаб -->
+          <div class="flex flex-col gap-4 border-t pt-4" style="border-color: var(--glass-border);">
+            <span data-i18n="blockCompressionScale" class="font-mono text-[11px] font-semibold uppercase tracking-wider" style="color: var(--text-muted);">
+              Сжатие и масштаб
+            </span>
+
+            <!-- Слайдер качества (10% - 100%) -->
+            <div>
+              <div class="mb-1.5 flex items-center justify-between">
+                <label for="quality-range" data-i18n="qualityLabel" class="text-xs font-medium" style="color: var(--text-secondary);">
+                  Качество сжатия
+                </label>
+                <span id="quality-badge" class="rounded-md px-2 py-0.5 font-mono text-xs font-semibold" style="background: var(--accent-soft); color: var(--accent);">
+                  Без потерь
+                </span>
+              </div>
+              <input
+                id="quality-range"
+                type="range"
+                min="10"
+                max="100"
+                step="1"
+                value="92"
+                disabled
+                class="studio-slider w-full"
+              />
+            </div>
+
+            <!-- Слайдер масштаба ресайза (25% - 200%) -->
+            <div>
+              <div class="mb-1.5 flex items-center justify-between">
+                <label for="scale-range" data-i18n="scaleLabel" class="text-xs font-medium" style="color: var(--text-secondary);">
+                  Масштаб ресайза
+                </label>
+                <span id="scale-badge" class="font-mono text-xs font-semibold" style="color: var(--text-primary);">
+                  100%
+                </span>
+              </div>
+              <input
+                id="scale-range"
+                type="range"
+                min="25"
+                max="200"
+                step="5"
+                value="100"
+                class="studio-slider w-full"
+              />
+              <div class="mt-1.5 flex items-center justify-between font-mono text-[11px]" style="color: var(--text-muted);">
+                <span data-i18n="outputDimsLabel">Итоговый размер:</span>
+                <span id="output-dims-value" class="font-semibold" style="color: var(--text-secondary);">—</span>
+              </div>
+            </div>
+
+            <!-- Опция удаления альфа-канала (фон при сохранении в JPEG или принудительно) -->
+            <div class="glass-subtle flex flex-col gap-2.5 rounded-2xl p-3">
+              <label class="flex cursor-pointer items-center justify-between gap-2 text-xs font-medium" style="color: var(--text-primary);">
+                <span data-i18n="stripAlphaLabel">Удалить альфа-канал (заливка фона)</span>
+                <input
+                  id="strip-alpha-checkbox"
+                  type="checkbox"
+                  class="h-4 w-4 rounded accent-sky-600"
+                />
+              </label>
+
+              <div id="alpha-bg-picker" class="flex items-center justify-between border-t pt-2 text-xs" style="border-color: var(--glass-border);">
+                <span data-i18n="matteColorLabel" style="color: var(--text-secondary);">Цвет подложки:</span>
+                <div class="flex items-center gap-1.5 font-mono text-[11px]">
+                  <button
+                    type="button"
+                    data-matte="#ffffff"
+                    class="matte-btn flex items-center gap-1 rounded-lg border px-2 py-1 font-semibold transition"
+                  >
+                    <span class="h-2.5 w-2.5 rounded-full border border-slate-300 bg-white"></span>
+                    <span data-i18n="matteWhite">Белый</span>
+                  </button>
+                  <button
+                    type="button"
+                    data-matte="#09090b"
+                    class="matte-btn flex items-center gap-1 rounded-lg border px-2 py-1 font-semibold transition"
+                  >
+                    <span class="h-2.5 w-2.5 rounded-full border border-zinc-600 bg-zinc-950"></span>
+                    <span data-i18n="matteBlack">Чёрный</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Блок 3: Быстрое действие -->
+          <div class="flex flex-col gap-2.5 border-t pt-4" style="border-color: var(--glass-border);">
+            <span data-i18n="blockQuickAction" class="font-mono text-[11px] font-semibold uppercase tracking-wider" style="color: var(--text-muted);">
+              Быстрое действие
+            </span>
+
+            <button
+              id="export-download-btn"
+              type="button"
+              class="btn-accent flex w-full items-center justify-center gap-2 rounded-2xl px-5 py-3.5 text-sm font-bold shadow-md"
+            >
+              <svg class="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.3">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+              </svg>
+              <span data-i18n="downloadMainBtn">Скачать изображение</span>
+              <span class="ml-1 rounded px-1.5 py-0.5 font-mono text-[10px] opacity-80" style="background: rgba(0,0,0,0.18);">
+                Ctrl+S
+              </span>
+            </button>
+
+            <button
+              id="copy-processed-btn"
+              type="button"
+              class="btn-glass flex w-full items-center justify-center gap-2 rounded-2xl px-4 py-3 text-xs font-semibold sm:text-sm"
+            >
+              <svg class="h-4 w-4 shrink-0" style="color: var(--accent);" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" />
+              </svg>
+              <span data-i18n="copyProcessedBtn">Копировать обработанное в буфер</span>
+            </button>
+          </div>
+        </div>
+      </aside>
+    </section>
+  </main>
+
+  <!-- ========================================================================
+       6. МИНИМАЛИСТИЧНЫЙ СТЕКЛЯННЫЙ ФУТЕР
+       ======================================================================== -->
+  <footer class="glass-header mt-auto border-b-0 border-t py-4">
+    <div class="mx-auto max-w-7xl px-4 text-center font-mono text-xs" style="color: var(--text-muted);">
+      <span data-i18n="footerText">
+        clip.local • 100% client-side обработка в памяти браузера — изображения никогда не отправляются на сервер
+      </span>
+    </div>
+  </footer>
+
+  <!-- ========================================================================
+       МОДАЛЬНОЕ ОКНО: ГОРЯЧИЕ КЛАВИШИ И ФОРМАТЫ
+       ======================================================================== -->
+  <div
+    id="guide-modal"
+    class="fixed inset-0 z-50 hidden items-center justify-center bg-black/45 p-4 backdrop-blur-sm"
+    role="dialog"
+    aria-modal="true"
+  >
+    <div class="glass-panel relative w-full max-w-xl rounded-3xl p-6 sm:p-7" style="background: var(--glass-bg-strong);">
+      <div class="flex items-center justify-between border-b pb-4" style="border-color: var(--glass-border);">
+        <h3 data-i18n="modalTitle" class="text-lg font-bold" style="color: var(--text-primary);">
+          Горячие клавиши и форматы экспорта
+        </h3>
+        <button
+          id="close-modal-btn"
+          type="button"
+          class="btn-glass flex h-8 w-8 items-center justify-center rounded-full font-mono text-sm font-bold"
+        >
+          ×
+        </button>
+      </div>
+
+      <div class="mt-5 flex flex-col gap-5 text-sm">
+        <!-- Секция шорткатов -->
+        <div>
+          <p data-i18n="modalShortcutsHeading" class="mb-2.5 font-mono text-xs font-semibold uppercase tracking-wider" style="color: var(--accent);">
+            Клавиатурные сочетания
+          </p>
+          <div class="flex flex-col gap-2">
+            <div class="glass-subtle flex items-center justify-between rounded-xl px-3.5 py-2.5">
+              <span data-i18n="scPasteDesc" style="color: var(--text-secondary);">Вставить изображение из буфера обмена</span>
+              <kbd class="rounded-lg border px-2 py-0.5 font-mono text-xs font-semibold" style="border-color: var(--glass-border); color: var(--text-primary);">Ctrl + V / Cmd + V</kbd>
+            </div>
+            <div class="glass-subtle flex items-center justify-between rounded-xl px-3.5 py-2.5">
+              <span data-i18n="scSaveDesc" style="color: var(--text-secondary);">Скачать обработанное активное изображение</span>
+              <kbd class="rounded-lg border px-2 py-0.5 font-mono text-xs font-semibold" style="border-color: var(--glass-border); color: var(--text-primary);">Ctrl + S / Cmd + S</kbd>
+            </div>
+            <div class="glass-subtle flex items-center justify-between rounded-xl px-3.5 py-2.5">
+              <span data-i18n="scDeleteDesc" style="color: var(--text-secondary);">Удалить активный снимок из ленты сессии</span>
+              <kbd class="rounded-lg border px-2 py-0.5 font-mono text-xs font-semibold" style="border-color: var(--glass-border); color: var(--text-primary);">Delete</kbd>
+            </div>
+          </div>
+        </div>
+
+        <!-- Секция форматов -->
+        <div>
+          <p data-i18n="modalFormatsHeading" class="mb-2.5 font-mono text-xs font-semibold uppercase tracking-wider" style="color: var(--accent);">
+            Сравнение форматов
+          </p>
+          <div class="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
+            <div class="glass-subtle rounded-2xl p-3">
+              <p class="font-mono text-xs font-bold" style="color: var(--text-primary);">PNG</p>
+              <p data-i18n="fmtPngDesc" class="mt-1 text-xs leading-relaxed" style="color: var(--text-secondary);">
+                Сжатие без потерь и полная поддержка прозрачности для UI-скриншотов.
+              </p>
+            </div>
+            <div class="glass-subtle rounded-2xl p-3">
+              <p class="font-mono text-xs font-bold" style="color: var(--text-primary);">JPEG</p>
+              <p data-i18n="fmtJpegDesc" class="mt-1 text-xs leading-relaxed" style="color: var(--text-secondary);">
+                Минимальный вес для фотографий; прозрачность заменяется выбранным фоном.
+              </p>
+            </div>
+            <div class="glass-subtle rounded-2xl p-3">
+              <p class="font-mono text-xs font-bold" style="color: var(--text-primary);">WebP</p>
+              <p data-i18n="fmtWebpDesc" class="mt-1 text-xs leading-relaxed" style="color: var(--text-secondary);">
+                Современный веб-формат: поддерживает альфа-канал при меньшем размере файла.
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========================================================================
+       КОНТЕЙНЕР TOAST-УВЕДОМЛЕНИЙ (ПРАВЫЙ НИЖНИЙ УГОЛ)
+       ======================================================================== -->
+  <div id="toast-container" class="pointer-events-none fixed bottom-4 right-4 z-50 flex max-w-sm flex-col gap-2.5 sm:bottom-6 sm:right-6"></div>
+
+  <!-- ========================================================================
+       СКРИПТ ПРИЛОЖЕНИЯ
+       ======================================================================== -->
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+      // ======================================================================
+      // 1. СЛОВАРЬ ЛОКАЛИЗАЦИИ (RU / EN)
+      // ======================================================================
+      const i18n = {
+        ru: {
+          themeLight: 'СВЕТЛАЯ',
+          themeDark: 'ТЁМНАЯ',
+          heroTitle: 'Студийный захват и экспорт изображений из буфера обмена',
+          heroSubtitle:
+            'Мгновенная вставка снимков экрана по Ctrl+V / Cmd+V, проверка прозрачности альфа-канала, ресайз, конвертация в PNG / JPEG / WebP и пакетное сохранение прямо в браузере.',
+          filterAll: 'ВСЕ',
+          guideBtn: 'Горячие клавиши и форматы',
+          dropTitle: 'Захват из буфера обмена или перетаскивание',
+          dropHint: 'Нажмите Ctrl+V (Cmd+V) в любом месте страницы или перетащите файл сюда',
+          pasteBtn: 'Вставить из буфера',
+          selectFileBtn: 'Выбрать файл с диска',
+          summaryCaptures: 'СНИМКОВ:',
+          summaryWeight: 'ОБЩИЙ ВЕС:',
+          batchFormatLabel: 'Скачать все в:',
+          downloadActiveBtn: 'Скачать активный',
+          downloadAllBtn: 'Скачать все',
+          clearBtn: 'Очистить',
+          previewHeader: 'Активный холст',
+          bgChecker: 'Сетка',
+          bgLight: 'Светлый',
+          bgDark: 'Тёмный',
+          zoomFit: 'Вписать',
+          emptyCanvasTitle: 'ХОЛСТ ПУСТ',
+          emptyCanvasHint: 'Нажмите Ctrl+V или выберите файл, чтобы начать работу',
+          metaResLabel: 'Габариты',
+          metaOrigLabel: 'Исходник',
+          metaOutLabel: 'Расчётный вес',
+          historyTitle: 'Захваченные снимки сессии',
+          exportPanelTitle: 'Параметры экспорта',
+          blockFileFormat: 'Файл и формат',
+          fileNameLabel: 'Имя файла',
+          refreshNameBtn: 'Обновить время',
+          formatLabel: 'Формат сохранения',
+          blockCompressionScale: 'Сжатие и масштаб',
+          qualityLabel: 'Качество сжатия',
+          qualityLossless: 'Без потерь',
+          scaleLabel: 'Масштаб ресайза',
+          outputDimsLabel: 'Итоговый размер:',
+          stripAlphaLabel: 'Удалить альфа-канал (заливка фона)',
+          matteColorLabel: 'Цвет подложки:',
+          matteWhite: 'Белый',
+          matteBlack: 'Чёрный',
+          blockQuickAction: 'Быстрое действие',
+          downloadMainBtn: 'Скачать изображение',
+          copyProcessedBtn: 'Копировать обработанное в буфер',
+          footerText:
+            'clip.local • 100% client-side обработка в памяти браузера — изображения никогда не отправляются на сервер',
+          modalTitle: 'Горячие клавиши и форматы экспорта',
+          modalShortcutsHeading: 'Клавиатурные сочетания',
+          scPasteDesc: 'Вставить изображение из буфера обмена',
+          scSaveDesc: 'Скачать обработанное активное изображение',
+          scDeleteDesc: 'Удалить активный снимок из ленты сессии',
+          modalFormatsHeading: 'Сравнение форматов',
+          fmtPngDesc: 'Сжатие без потерь и полная поддержка прозрачности для UI-скриншотов.',
+          fmtJpegDesc: 'Минимальный вес для фотографий; прозрачность заменяется выбранным фоном.',
+          fmtWebpDesc: 'Современный веб-формат: поддерживает альфа-канал при меньшем размере файла.',
+          toastPasted: 'Снимок захвачен ({w}×{h} px)',
+          toastNoImgClipboard: 'В буфере обмена нет изображения. Скопируйте картинку и нажмите Ctrl+V.',
+          toastClipboardDenied: 'Браузер ограничил прямой доступ по кнопке — просто нажмите Ctrl+V / Cmd+V.',
+          toastDownloaded: 'Файл «{name}» успешно сохранён',
+          toastBatchDownloaded: 'Сохранено файлов: {count}',
+          toastCopiedBack: 'Обработанный PNG скопирован обратно в буфер обмена',
+          toastCopyError: 'Не удалось записать изображение в буфер обмена',
+          toastCleared: 'Лента снимков очищена',
+          toastNoActive: 'Нет активного изображения для экспорта',
+          noHistoryFilter: 'Нет снимков для выбранного фильтра',
+        },
+        en: {
+          themeLight: 'LIGHT',
+          themeDark: 'DARK',
+          heroTitle: 'Studio Clipboard Image Capture & Export Workstation',
+          heroSubtitle:
+            'Instant screenshot paste via Ctrl+V / Cmd+V, alpha-channel transparency inspection, live scaling, PNG / JPEG / WebP conversion, and batch export right in your browser.',
+          filterAll: 'ALL',
+          guideBtn: 'Shortcuts & Formats',
+          dropTitle: 'Clipboard Capture or Drag & Drop',
+          dropHint: 'Press Ctrl+V (Cmd+V) anywhere on the page or drop an image file here',
+          pasteBtn: 'Paste from Clipboard',
+          selectFileBtn: 'Select File from Disk',
+          summaryCaptures: 'CAPTURES:',
+          summaryWeight: 'TOTAL SIZE:',
+          batchFormatLabel: 'Batch format:',
+          downloadActiveBtn: 'Download Active',
+          downloadAllBtn: 'Download All',
+          clearBtn: 'Clear',
+          previewHeader: 'Active Canvas',
+          bgChecker: 'Checker',
+          bgLight: 'Light',
+          bgDark: 'Dark',
+          zoomFit: 'Fit',
+          emptyCanvasTitle: 'CANVAS EMPTY',
+          emptyCanvasHint: 'Press Ctrl+V or select a file to begin',
+          metaResLabel: 'Dimensions',
+          metaOrigLabel: 'Source',
+          metaOutLabel: 'Est. Output',
+          historyTitle: 'Session Captured Items',
+          exportPanelTitle: 'Export Parameters',
+          blockFileFormat: 'File & Format',
+          fileNameLabel: 'File Name',
+          refreshNameBtn: 'Reset timestamp',
+          formatLabel: 'Output Format',
+          blockCompressionScale: 'Compression & Scale',
+          qualityLabel: 'Compression Quality',
+          qualityLossless: 'Lossless',
+          scaleLabel: 'Resize Scale',
+          outputDimsLabel: 'Output dimensions:',
+          stripAlphaLabel: 'Remove alpha channel (fill background)',
+          matteColorLabel: 'Matte color:',
+          matteWhite: 'White',
+          matteBlack: 'Black',
+          blockQuickAction: 'Quick Action',
+          downloadMainBtn: 'Download Image',
+          copyProcessedBtn: 'Copy Processed to Clipboard',
+          footerText:
+            'clip.local • 100% client-side in-memory processing — images are never uploaded to any server',
+          modalTitle: 'Keyboard Shortcuts & Export Formats',
+          modalShortcutsHeading: 'Keyboard Shortcuts',
+          scPasteDesc: 'Paste image from system clipboard',
+          scSaveDesc: 'Download processed active image',
+          scDeleteDesc: 'Remove active capture from session strip',
+          modalFormatsHeading: 'Format Comparison',
+          fmtPngDesc: 'Lossless compression with full alpha transparency for UI screenshots.',
+          fmtJpegDesc: 'Compact file size for photos; transparency is flattened with selected matte.',
+          fmtWebpDesc: 'Modern web format supporting alpha transparency at smaller file sizes.',
+          toastPasted: 'Image captured ({w}×{h} px)',
+          toastNoImgClipboard: 'No image found in clipboard. Copy an image and press Ctrl+V.',
+          toastClipboardDenied: 'Direct button read blocked by browser — simply press Ctrl+V / Cmd+V.',
+          toastDownloaded: 'Saved "{name}"',
+          toastBatchDownloaded: 'Exported {count} file(s)',
+          toastCopiedBack: 'Processed PNG copied back to clipboard',
+          toastCopyError: 'Unable to write image to clipboard',
+          toastCleared: 'Session captures cleared',
+          toastNoActive: 'No active image to export',
+          noHistoryFilter: 'No captures match the selected filter',
+        },
+      };
+
+      // ======================================================================
+      // 2. СОСТОЯНИЕ ПРИЛОЖЕНИЯ
+      // ======================================================================
+      const state = {
+        lang: localStorage.getItem('cliplocal-lang') || 'ru',
+        theme: localStorage.getItem('cliplocal-theme') || 'light',
+        items: [],            // { id, name, dataUrl, width, height, formatTag, origMime, origSize, capturedAt, isDemo }
+        activeId: null,
+        activeFilter: 'ALL',  // ALL | PNG | JPEG | WEBP
+        backdrop: 'checker',  // checker | light | dark
+        zoom: 'fit',          // fit | 100
+        exportFormat: 'image/png',
+        quality: 0.92,
+        scale: 100,
+        stripAlpha: false,
+        matteColor: '#ffffff',
+        processedBlob: null,
+      };
+
+      // ======================================================================
+      // 3. DOM-ЭЛЕМЕНТЫ
+      // ======================================================================
+      const els = {
+        fileInput: document.getElementById('file-input'),
+        langBtns: document.querySelectorAll('.lang-btn'),
+        themeBtns: document.querySelectorAll('.theme-btn'),
+        filterTabs: document.querySelectorAll('.filter-tab'),
+        countAll: document.getElementById('count-ALL'),
+        countPng: document.getElementById('count-PNG'),
+        countJpeg: document.getElementById('count-JPEG'),
+        countWebp: document.getElementById('count-WEBP'),
+
+        guideModalBtn: document.getElementById('guide-modal-btn'),
+        guideModal: document.getElementById('guide-modal'),
+        closeModalBtn: document.getElementById('close-modal-btn'),
+
+        tiltDropzone: document.getElementById('tilt-dropzone'),
+        pasteClipboardBtn: document.getElementById('paste-clipboard-btn'),
+        selectFileBtn: document.getElementById('select-file-btn'),
+
+        summaryCount: document.getElementById('summary-count'),
+        summarySize: document.getElementById('summary-size'),
+        batchFormatSelect: document.getElementById('batch-format-select'),
+        batchDownloadActiveBtn: document.getElementById('batch-download-active-btn'),
+        batchDownloadAllBtn: document.getElementById('batch-download-all-btn'),
+        clearAllBtn: document.getElementById('clear-all-btn'),
+
+        demoBadge: document.getElementById('demo-badge'),
+        backdropBtns: document.querySelectorAll('.backdrop-btn'),
+        zoomBtns: document.querySelectorAll('.zoom-btn'),
+        canvasStage: document.getElementById('canvas-stage'),
+        activePreviewImg: document.getElementById('active-preview-img'),
+        emptyCanvasPlaceholder: document.getElementById('empty-canvas-placeholder'),
+        activeMetaRes: document.getElementById('active-meta-res'),
+        activeMetaOrig: document.getElementById('active-meta-orig'),
+        activeMetaOut: document.getElementById('active-meta-out'),
+
+        historyFilterLabel: document.getElementById('history-filter-label'),
+        historyCardsGrid: document.getElementById('history-cards-grid'),
+
+        exportFilename: document.getElementById('export-filename'),
+        refreshTimestampBtn: document.getElementById('refresh-timestamp-btn'),
+        exportFormat: document.getElementById('export-format'),
+        qualityRange: document.getElementById('quality-range'),
+        qualityBadge: document.getElementById('quality-badge'),
+        scaleRange: document.getElementById('scale-range'),
+        scaleBadge: document.getElementById('scale-badge'),
+        outputDimsValue: document.getElementById('output-dims-value'),
+        stripAlphaCheckbox: document.getElementById('strip-alpha-checkbox'),
+        matteBtns: document.querySelectorAll('.matte-btn'),
+        exportDownloadBtn: document.getElementById('export-download-btn'),
+        copyProcessedBtn: document.getElementById('copy-processed-btn'),
+
+        toastContainer: document.getElementById('toast-container'),
+      };
+
+      // ======================================================================
+      // 4. УТИЛИТЫ (ФОРМАТИРОВАНИЕ, TOAST, ИМЕНА ФАЙЛОВ)
+      // ======================================================================
+      function t(key, vars = {}) {
+        let str = (i18n[state.lang] && i18n[state.lang][key]) || i18n.ru[key] || key;
+        Object.keys(vars).forEach((k) => {
+          str = str.replace(`{${k}}`, vars[k]);
+        });
+        return str;
+      }
+
+      function formatSize(bytes) {
+        if (!bytes || bytes <= 0) return '0 KB';
+        if (bytes < 1024) return `${bytes} B`;
+        const kb = bytes / 1024;
+        if (kb < 1024) return `${kb.toFixed(kb < 10 ? 1 : 0)} KB`;
+        return `${(kb / 1024).toFixed(2)} MB`;
+      }
+
+      function buildTimestampName() {
+        const d = new Date();
+        const pad = (n) => String(n).padStart(2, '0');
+        return `clip_${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}_${pad(d.getHours())}-${pad(d.getMinutes())}-${pad(d.getSeconds())}`;
+      }
+
+      function normalizeFormatTag(mime) {
+        if (!mime) return 'PNG';
+        const lower = mime.toLowerCase();
+        if (lower.includes('jpeg') || lower.includes('jpg')) return 'JPEG';
+        if (lower.includes('webp')) return 'WEBP';
+        return 'PNG';
+      }
+
+      function mimeToExt(mime) {
+        if (mime === 'image/jpeg') return 'jpg';
+        if (mime === 'image/webp') return 'webp';
+        return 'png';
+      }
+
+      function showToast(message, type = 'info') {
+        const toast = document.createElement('div');
+        const dotColor =
+          type === 'success' ? '#10b981' : type === 'error' ? '#f43f5e' : 'var(--accent)';
+
+        toast.className =
+          'glass-panel pointer-events-auto flex items-center gap-3 rounded-2xl px-4 py-3 text-xs font-medium shadow-lg transition-all duration-300 translate-y-2 opacity-0 sm:text-sm';
+        toast.style.background = 'var(--glass-bg-strong)';
+        toast.innerHTML = `
+          <span class="h-2.5 w-2.5 shrink-0 rounded-full" style="background:${dotColor};"></span>
+          <span style="color: var(--text-primary);">${message}</span>
+        `;
+
+        els.toastContainer.appendChild(toast);
+        requestAnimationFrame(() => {
+          toast.classList.remove('translate-y-2', 'opacity-0');
+        });
+
+        setTimeout(() => {
+          toast.classList.add('translate-y-2', 'opacity-0');
+          setTimeout(() => toast.remove(), 300);
+        }, 3800);
+      }
+
+      // ======================================================================
+      // 5. ПЕРЕКЛЮЧЕНИЕ ТЕМЫ И ЯЗЫКА
+      // ======================================================================
+      function applyTheme(theme) {
+        state.theme = theme;
+        document.documentElement.setAttribute('data-theme', theme);
+        localStorage.setItem('cliplocal-theme', theme);
+
+        els.themeBtns.forEach((btn) => {
+          const active = btn.dataset.themeBtn === theme;
+          btn.style.background = active ? 'var(--accent)' : 'transparent';
+          btn.style.color = active ? 'var(--accent-text)' : 'var(--text-secondary)';
+        });
+      }
+
+      function applyLanguage(lang) {
+        state.lang = lang;
+        document.documentElement.setAttribute('lang', lang);
+        localStorage.setItem('cliplocal-lang', lang);
+
+        els.langBtns.forEach((btn) => {
+          const active = btn.dataset.langBtn === lang;
+          btn.style.background = active ? 'var(--accent)' : 'transparent';
+          btn.style.color = active ? 'var(--accent-text)' : 'var(--text-secondary)';
+        });
+
+        document.querySelectorAll('[data-i18n]').forEach((node) => {
+          const key = node.getAttribute('data-i18n');
+          node.textContent = t(key);
+        });
+
+        updateQualityUI();
+        renderHistoryList();
+      }
+
+      els.themeBtns.forEach((btn) =>
+        btn.addEventListener('click', () => applyTheme(btn.dataset.themeBtn))
+      );
+      els.langBtns.forEach((btn) =>
+        btn.addEventListener('click', () => applyLanguage(btn.dataset.langBtn))
+      );
+
+      // ======================================================================
+      // 6. 3D HOVER TILT ДЛЯ ГЛАВНОЙ КАРТОЧКИ ВСТАВКИ
+      // ======================================================================
+      const tiltCard = els.tiltDropzone;
+      tiltCard.addEventListener('mousemove', (e) => {
+        const rect = tiltCard.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+        const px = x / rect.width;
+        const py = y / rect.height;
+
+        const maxTilt = 6.5;
+        const rotateY = (px - 0.5) * (maxTilt * 2);
+        const rotateX = (0.5 - py) * (maxTilt * 2);
+
+        tiltCard.classList.remove('is-resetting');
+        tiltCard.style.setProperty('--glare-x', `${(px * 100).toFixed(1)}%`);
+        tiltCard.style.setProperty('--glare-y', `${(py * 100).toFixed(1)}%`);
+        tiltCard.style.transform = `rotateX(${rotateX.toFixed(2)}deg) rotateY(${rotateY.toFixed(2)}deg)`;
+      });
+
+      tiltCard.addEventListener('mouseleave', () => {
+        tiltCard.classList.add('is-resetting');
+        tiltCard.style.transform = 'rotateX(0deg) rotateY(0deg)';
+      });
+
+      // ======================================================================
+      // 7. ДЕМОНСТРАЦИОННЫЙ СТУДИЙНЫЙ МАКЕТ ПРИ ПЕРВОМ ОТКРЫТИИ
+      // ======================================================================
+      function createDemoSampleItem() {
+        const canvas = document.createElement('canvas');
+        canvas.width = 1280;
+        canvas.height = 720;
+        const ctx = canvas.getContext('2d');
+
+        // Оставляем края прозрачными, чтобы продемонстрировать шахматную подложку альфа-канала
+        const pad = 44;
+        const w = canvas.width - pad * 2;
+        const h = canvas.height - pad * 2;
+        const r = 36;
+
+        // Скруглённая стеклянная карточка внутри прозрачного холста
+        ctx.save();
+        ctx.beginPath();
+        ctx.roundRect(pad, pad, w, h, r);
+        ctx.clip();
+
+        // Студийный небесно-лазурный градиент
+        const bgGrad = ctx.createLinearGradient(pad, pad, pad + w, pad + h);
+        bgGrad.addColorStop(0, '#0284c7');
+        bgGrad.addColorStop(0.5, '#0ea5e9');
+        bgGrad.addColorStop(1, '#38bdf8');
+        ctx.fillStyle = bgGrad;
+        ctx.fillRect(pad, pad, w, h);
+
+        // Декоративные полупрозрачные сферы
+        const orb1 = ctx.createRadialGradient(340, 220, 10, 340, 220, 260);
+        orb1.addColorStop(0, 'rgba(255, 255, 255, 0.55)');
+        orb1.addColorStop(1, 'rgba(255, 255, 255, 0)');
+        ctx.fillStyle = orb1;
+        ctx.fillRect(pad, pad, w, h);
+
+        const orb2 = ctx.createRadialGradient(960, 500, 10, 960, 500, 280);
+        orb2.addColorStop(0, 'rgba(12, 74, 110, 0.48)');
+        orb2.addColorStop(1, 'rgba(12, 74, 110, 0)');
+        ctx.fillStyle = orb2;
+        ctx.fillRect(pad, pad, w, h);
+
+        // Координатная сетка
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.16)';
+        ctx.lineWidth = 1;
+        for (let gx = pad + 64; gx < pad + w; gx += 64) {
+          ctx.beginPath();
+          ctx.moveTo(gx, pad);
+          ctx.lineTo(gx, pad + h);
+          ctx.stroke();
+        }
+        for (let gy = pad + 64; gy < pad + h; gy += 64) {
+          ctx.beginPath();
+          ctx.moveTo(pad, gy);
+          ctx.lineTo(pad + w, gy);
+          ctx.stroke();
+        }
+
+        // Центральная стеклянная плашка
+        const cardW = 640;
+        const cardH = 260;
+        const cardX = (canvas.width - cardW) / 2;
+        const cardY = (canvas.height - cardH) / 2;
+
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.22)';
+        ctx.beginPath();
+        ctx.roundRect(cardX, cardY, cardW, cardH, 28);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.65)';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        // Типографика на макете
+        ctx.fillStyle = '#ffffff';
+        ctx.font = '700 38px Inter, system-ui, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('clip.local Studio Canvas', canvas.width / 2, cardY + 104);
+
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+        ctx.font = '500 20px "JetBrains Mono", monospace';
+        ctx.fillText('1280 × 720 PX  •  ALPHA TRANSPARENCY  •  CTRL+V READY', canvas.width / 2, cardY + 152);
+
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.78)';
+        ctx.font = '400 17px Inter, system-ui, sans-serif';
+        ctx.fillText('Вставьте свой скриншот из буфера обмена, чтобы заменить образец', canvas.width / 2, cardY + 198);
+
+        ctx.restore();
+
+        // Внешняя тонкая рамка скругления
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.7)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.roundRect(pad, pad, w, h, r);
+        ctx.stroke();
+
+        const dataUrl = canvas.toDataURL('image/png');
+        const approxBytes = Math.round((dataUrl.length * 3) / 4);
+
+        return {
+          id: 'demo-sample-1',
+          name: 'studio_alpha_sample',
+          dataUrl,
+          width: 1280,
+          height: 720,
+          formatTag: 'PNG',
+          origMime: 'image/png',
+          origSize: approxBytes,
+          capturedAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+          isDemo: true,
+        };
+      }
+
+      // ======================================================================
+      // 8. ОБРАБОТКА ВХОДЯЩИХ ИЗОБРАЖЕНИЙ (БУФЕР, ФАЙЛ, DRAG & DROP)
+      // ======================================================================
+      function addImageFromBlob(blob, customBaseName = null) {
+        if (!blob || !blob.type.startsWith('image/')) return;
+
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+          const dataUrl = ev.target.result;
+          const img = new Image();
+          img.onload = () => {
+            // Если в ленте был только демо-образец, заменим его первым реальным снимком
+            if (state.items.length === 1 && state.items[0].isDemo) {
+              state.items = [];
+            }
+
+            const cleanName = customBaseName
+              ? customBaseName.replace(/\.[^/.]+$/, '').replace(/[\\/:*?"<>|]/g, '_')
+              : buildTimestampName();
+
+            const newItem = {
+              id: `clip_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+              name: cleanName,
+              dataUrl,
+              width: img.naturalWidth,
+              height: img.naturalHeight,
+              formatTag: normalizeFormatTag(blob.type),
+              origMime: blob.type || 'image/png',
+              origSize: blob.size,
+              capturedAt: new Date().toLocaleTimeString([], {
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit',
+              }),
+              isDemo: false,
+            };
+
+            state.items.unshift(newItem);
+            state.activeFilter = 'ALL';
+            setActiveItem(newItem.id);
+            updateCountsAndSummary();
+            renderHistoryList();
+            showToast(t('toastPasted', { w: newItem.width, h: newItem.height }), 'success');
+          };
+          img.src = dataUrl;
+        };
+        reader.readAsDataURL(blob);
+      }
+
+      // Глобальное событие paste (Ctrl+V / Cmd+V)
+      window.addEventListener('paste', (e) => {
+        const cb = e.clipboardData || window.clipboardData;
+        if (!cb) return;
+
+        let foundImage = false;
+        if (cb.items) {
+          for (let i = 0; i < cb.items.length; i++) {
+            if (cb.items[i].type.startsWith('image/')) {
+              const file = cb.items[i].getAsFile();
+              if (file) {
+                e.preventDefault();
+                addImageFromBlob(file);
+                foundImage = true;
+                break;
+              }
+            }
+          }
+        }
+
+        if (!foundImage && cb.files && cb.files.length > 0) {
+          for (const f of cb.files) {
+            if (f.type.startsWith('image/')) {
+              e.preventDefault();
+              addImageFromBlob(f);
+              foundImage = true;
+              break;
+            }
+          }
+        }
+
+        if (!foundImage && document.activeElement !== els.exportFilename) {
+          showToast(t('toastNoImgClipboard'), 'info');
+        }
+      });
+
+      // Кнопка «Вставить из буфера» через navigator.clipboard.read()
+      els.pasteClipboardBtn.addEventListener('click', async () => {
+        if (!navigator.clipboard || !navigator.clipboard.read) {
+          showToast(t('toastClipboardDenied'), 'info');
+          return;
+        }
+        try {
+          const clipItems = await navigator.clipboard.read();
+          let found = false;
+          for (const item of clipItems) {
+            const imgType = item.types.find((type) => type.startsWith('image/'));
+            if (imgType) {
+              const blob = await item.getType(imgType);
+              addImageFromBlob(blob);
+              found = true;
+              break;
+            }
+          }
+          if (!found) {
+            showToast(t('toastNoImgClipboard'), 'info');
+          }
+        } catch (err) {
+          showToast(t('toastClipboardDenied'), 'info');
+        }
+      });
+
+      // Выбор файла с диска
+      els.selectFileBtn.addEventListener('click', () => els.fileInput.click());
+      els.fileInput.addEventListener('change', (e) => {
+        if (e.target.files && e.target.files.length > 0) {
+          Array.from(e.target.files).forEach((file) => addImageFromBlob(file, file.name));
+          els.fileInput.value = '';
+        }
+      });
+
+      // Drag & Drop по всей странице
+      window.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        tiltCard.style.borderColor = 'var(--accent)';
+      });
+      window.addEventListener('dragleave', (e) => {
+        if (e.relatedTarget === null) {
+          tiltCard.style.borderColor = '';
+        }
+      });
+      window.addEventListener('drop', (e) => {
+        e.preventDefault();
+        tiltCard.style.borderColor = '';
+        if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+          Array.from(e.dataTransfer.files).forEach((file) => addImageFromBlob(file, file.name));
+        }
+      });
+
+      // ======================================================================
+      // 9. РЕНДЕРИНГ АКТИВНОГО ХОЛСТА И КОНВЕРТАЦИЯ CANVAS
+      // ======================================================================
+      function getActiveItem() {
+        return state.items.find((item) => item.id === state.activeId) || null;
+      }
+
+      function setActiveItem(id) {
+        state.activeId = id;
+        const item = getActiveItem();
+
+        if (!item) {
+          els.activePreviewImg.classList.add('hidden');
+          els.emptyCanvasPlaceholder.classList.remove('hidden');
+          els.emptyCanvasPlaceholder.classList.add('flex');
+          els.demoBadge.classList.add('hidden');
+          els.activeMetaRes.textContent = '—';
+          els.activeMetaOrig.textContent = '—';
+          els.activeMetaOut.textContent = '—';
+          els.outputDimsValue.textContent = '—';
+          state.processedBlob = null;
+          renderHistoryList();
+          return;
+        }
+
+        els.emptyCanvasPlaceholder.classList.add('hidden');
+        els.emptyCanvasPlaceholder.classList.remove('flex');
+        els.activePreviewImg.classList.remove('hidden');
+        els.activePreviewImg.src = item.dataUrl;
+
+        if (item.isDemo) {
+          els.demoBadge.classList.remove('hidden');
+        } else {
+          els.demoBadge.classList.add('hidden');
+        }
+
+        els.exportFilename.value = item.name;
+        els.activeMetaRes.textContent = `${item.width} × ${item.height} px`;
+        els.activeMetaOrig.textContent = `${item.formatTag} • ${formatSize(item.origSize)}`;
+
+        renderHistoryList();
+        recalculateProcessedOutput();
+      }
+
+      function renderItemToBlob(item, options) {
+        return new Promise((resolve, reject) => {
+          const img = new Image();
+          img.onload = () => {
+            const scaleFactor = (options.scale || 100) / 100;
+            const targetW = Math.max(1, Math.round(item.width * scaleFactor));
+            const targetH = Math.max(1, Math.round(item.height * scaleFactor));
+
+            const canvas = document.createElement('canvas');
+            canvas.width = targetW;
+            canvas.height = targetH;
+            const ctx = canvas.getContext('2d');
+            ctx.imageSmoothingEnabled = true;
+            ctx.imageSmoothingQuality = 'high';
+
+            // Заливка подложки для JPEG или при включённой опции удаления альфа-канала
+            if (options.format === 'image/jpeg' || options.stripAlpha) {
+              ctx.fillStyle = options.matteColor || '#ffffff';
+              ctx.fillRect(0, 0, targetW, targetH);
+            }
+
+            ctx.drawImage(img, 0, 0, targetW, targetH);
+
+            canvas.toBlob(
+              (blob) => {
+                if (blob) {
+                  resolve({ blob, width: targetW, height: targetH });
+                } else {
+                  reject(new Error('Canvas toBlob failed'));
+                }
+              },
+              options.format,
+              options.format === 'image/png' ? undefined : options.quality
+            );
+          };
+          img.onerror = reject;
+          img.src = item.dataUrl;
+        });
+      }
+
+      async function recalculateProcessedOutput() {
+        const item = getActiveItem();
+        if (!item) return;
+
+        const scaleFactor = state.scale / 100;
+        const targetW = Math.max(1, Math.round(item.width * scaleFactor));
+        const targetH = Math.max(1, Math.round(item.height * scaleFactor));
+        els.outputDimsValue.textContent = `${targetW} × ${targetH} px`;
+        els.activeMetaOut.textContent = '...';
+
+        try {
+          const res = await renderItemToBlob(item, {
+            format: state.exportFormat,
+            quality: state.quality,
+            scale: state.scale,
+            stripAlpha: state.stripAlpha,
+            matteColor: state.matteColor,
+          });
+          state.processedBlob = res.blob;
+          els.activeMetaOut.textContent = `${mimeToExt(state.exportFormat).toUpperCase()} • ${formatSize(res.blob.size)}`;
+        } catch (err) {
+          state.processedBlob = null;
+          els.activeMetaOut.textContent = '—';
+        }
+      }
+
+      // ======================================================================
+      // 10. УПРАВЛЕНИЕ ПАРАМЕТРАМИ ПРЕДПРОСМОТРА И ЭКСПОРТА
+      // ======================================================================
+      function updateBackdropUI() {
+        els.canvasStage.classList.remove('bg-checkerboard', 'bg-surface-light', 'bg-surface-dark');
+        if (state.backdrop === 'light') els.canvasStage.classList.add('bg-surface-light');
+        else if (state.backdrop === 'dark') els.canvasStage.classList.add('bg-surface-dark');
+        else els.canvasStage.classList.add('bg-checkerboard');
+
+        els.backdropBtns.forEach((btn) => {
+          const active = btn.dataset.backdrop === state.backdrop;
+          btn.style.background = active ? 'var(--accent)' : 'transparent';
+          btn.style.color = active ? 'var(--accent-text)' : 'var(--text-secondary)';
+        });
+      }
+
+      function updateZoomUI() {
+        if (state.zoom === '100') {
+          els.activePreviewImg.classList.remove('max-h-[460px]', 'max-w-full');
+          els.activePreviewImg.classList.add('max-w-none');
+        } else {
+          els.activePreviewImg.classList.add('max-h-[460px]', 'max-w-full');
+          els.activePreviewImg.classList.remove('max-w-none');
+        }
+
+        els.zoomBtns.forEach((btn) => {
+          const active = btn.dataset.zoom === state.zoom;
+          btn.style.background = active ? 'var(--accent)' : 'transparent';
+          btn.style.color = active ? 'var(--accent-text)' : 'var(--text-secondary)';
+        });
+      }
+
+      els.backdropBtns.forEach((btn) =>
+        btn.addEventListener('click', () => {
+          state.backdrop = btn.dataset.backdrop;
+          updateBackdropUI();
+        })
+      );
+
+      els.zoomBtns.forEach((btn) =>
+        btn.addEventListener('click', () => {
+          state.zoom = btn.dataset.zoom;
+          updateZoomUI();
+        })
+      );
+
+      function updateQualityUI() {
+        const isPng = state.exportFormat === 'image/png';
+        els.qualityRange.disabled = isPng;
+        if (isPng) {
+          els.qualityBadge.textContent = t('qualityLossless');
+        } else {
+          els.qualityBadge.textContent = `${Math.round(state.quality * 100)}%`;
+        }
+      }
+
+      function updateMatteUI() {
+        els.matteBtns.forEach((btn) => {
+          const active = btn.dataset.matte === state.matteColor;
+          btn.style.borderColor = active ? 'var(--accent)' : 'var(--glass-border)';
+          btn.style.background = active ? 'var(--accent-soft)' : 'transparent';
+          btn.style.color = active ? 'var(--accent)' : 'var(--text-secondary)';
+        });
+      }
+
+      els.exportFormat.addEventListener('change', (e) => {
+        state.exportFormat = e.target.value;
+        if (state.exportFormat === 'image/jpeg') {
+          state.stripAlpha = true;
+          els.stripAlphaCheckbox.checked = true;
+        }
+        updateQualityUI();
+        recalculateProcessedOutput();
+      });
+
+      els.qualityRange.addEventListener('input', (e) => {
+        state.quality = parseInt(e.target.value, 10) / 100;
+        updateQualityUI();
+        recalculateProcessedOutput();
+      });
+
+      els.scaleRange.addEventListener('input', (e) => {
+        state.scale = parseInt(e.target.value, 10);
+        els.scaleBadge.textContent = `${state.scale}%`;
+        recalculateProcessedOutput();
+      });
+
+      els.stripAlphaCheckbox.addEventListener('change', (e) => {
+        state.stripAlpha = e.target.checked;
+        recalculateProcessedOutput();
+      });
+
+      els.matteBtns.forEach((btn) =>
+        btn.addEventListener('click', () => {
+          state.matteColor = btn.dataset.matte;
+          state.stripAlpha = true;
+          els.stripAlphaCheckbox.checked = true;
+          updateMatteUI();
+          recalculateProcessedOutput();
+        })
+      );
+
+      els.exportFilename.addEventListener('input', (e) => {
+        const item = getActiveItem();
+        if (item) {
+          item.name = e.target.value;
+          renderHistoryList();
+        }
+      });
+
+      els.refreshTimestampBtn.addEventListener('click', () => {
+        const fresh = buildTimestampName();
+        els.exportFilename.value = fresh;
+        const item = getActiveItem();
+        if (item) {
+          item.name = fresh;
+          renderHistoryList();
+        }
+      });
+
+      // ======================================================================
+      // 11. СКАЧИВАНИЕ, КОПИРОВАНИЕ В БУФЕР И ПАКЕТНЫЕ ДЕЙСТВИЯ
+      // ======================================================================
+      function triggerBlobDownload(blob, filename) {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      }
+
+      async function downloadActiveImage() {
+        const item = getActiveItem();
+        if (!item) {
+          showToast(t('toastNoActive'), 'info');
+          return;
+        }
+
+        const res = await renderItemToBlob(item, {
+          format: state.exportFormat,
+          quality: state.quality,
+          scale: state.scale,
+          stripAlpha: state.stripAlpha,
+          matteColor: state.matteColor,
+        });
+
+        const ext = mimeToExt(state.exportFormat);
+        const baseName = (els.exportFilename.value.trim() || item.name || buildTimestampName()).replace(
+          /[\\/:*?"<>|]/g,
+          '_'
+        );
+        const fullName = `${baseName}.${ext}`;
+
+        triggerBlobDownload(res.blob, fullName);
+        showToast(t('toastDownloaded', { name: fullName }), 'success');
+      }
+
+      els.exportDownloadBtn.addEventListener('click', downloadActiveImage);
+      els.batchDownloadActiveBtn.addEventListener('click', downloadActiveImage);
+
+      // Пакетное скачивание всех снимков
+      els.batchDownloadAllBtn.addEventListener('click', async () => {
+        if (state.items.length === 0) {
+          showToast(t('toastNoActive'), 'info');
+          return;
+        }
+
+        const batchMime = els.batchFormatSelect.value;
+        const ext = mimeToExt(batchMime);
+
+        for (let i = 0; i < state.items.length; i++) {
+          const item = state.items[i];
+          const res = await renderItemToBlob(item, {
+            format: batchMime,
+            quality: state.quality,
+            scale: 100,
+            stripAlpha: batchMime === 'image/jpeg',
+            matteColor: state.matteColor,
+          });
+          const fileName = `${item.name || `clip_${i + 1}`}.${ext}`;
+          triggerBlobDownload(res.blob, fileName);
+          await new Promise((r) => setTimeout(r, 160));
+        }
+
+        showToast(t('toastBatchDownloaded', { count: state.items.length }), 'success');
+      });
+
+      // Копировать обработанное изображение обратно в буфер обмена (PNG ClipboardItem)
+      els.copyProcessedBtn.addEventListener('click', async () => {
+        const item = getActiveItem();
+        if (!item) {
+          showToast(t('toastNoActive'), 'info');
+          return;
+        }
+
+        if (!navigator.clipboard || !window.ClipboardItem) {
+          showToast(t('toastCopyError'), 'error');
+          return;
+        }
+
+        try {
+          const pngRes = await renderItemToBlob(item, {
+            format: 'image/png',
+            quality: 1,
+            scale: state.scale,
+            stripAlpha: state.stripAlpha,
+            matteColor: state.matteColor,
+          });
+          await navigator.clipboard.write([new ClipboardItem({ 'image/png': pngRes.blob })]);
+          showToast(t('toastCopiedBack'), 'success');
+        } catch (err) {
+          showToast(t('toastCopyError'), 'error');
+        }
+      });
+
+      // Очистить все снимки
+      els.clearAllBtn.addEventListener('click', () => {
+        state.items = [];
+        state.activeId = null;
+        updateCountsAndSummary();
+        setActiveItem(null);
+        showToast(t('toastCleared'), 'info');
+      });
+
+      // ======================================================================
+      // 12. ФИЛЬТРАЦИЯ И ЛЕНТА КАРТОЧЕК ИСТОРИИ СЕССИИ
+      // ======================================================================
+      function updateFilterTabsUI() {
+        els.filterTabs.forEach((tab) => {
+          const active = tab.dataset.filter === state.activeFilter;
+          tab.style.background = active ? 'var(--accent)' : 'transparent';
+          tab.style.color = active ? 'var(--accent-text)' : 'var(--text-secondary)';
+          const badge = tab.querySelector('span:last-child');
+          if (badge) {
+            badge.style.background = active ? 'rgba(0,0,0,0.18)' : 'var(--accent-soft)';
+            badge.style.color = active ? 'var(--accent-text)' : 'var(--accent)';
+          }
+        });
+        els.historyFilterLabel.textContent = state.activeFilter;
+      }
+
+      els.filterTabs.forEach((tab) =>
+        tab.addEventListener('click', () => {
+          state.activeFilter = tab.dataset.filter;
+          updateFilterTabsUI();
+          renderHistoryList();
+        })
+      );
+
+      function updateCountsAndSummary() {
+        const all = state.items.length;
+        const png = state.items.filter((i) => i.formatTag === 'PNG').length;
+        const jpeg = state.items.filter((i) => i.formatTag === 'JPEG').length;
+        const webp = state.items.filter((i) => i.formatTag === 'WEBP').length;
+
+        els.countAll.textContent = all;
+        els.countPng.textContent = png;
+        els.countJpeg.textContent = jpeg;
+        els.countWebp.textContent = webp;
+
+        const totalBytes = state.items.reduce((acc, item) => acc + (item.origSize || 0), 0);
+        els.summaryCount.textContent = all;
+        els.summarySize.textContent = formatSize(totalBytes);
+      }
+
+      function removeHistoryItem(id) {
+        const idx = state.items.findIndex((item) => item.id === id);
+        if (idx === -1) return;
+        state.items.splice(idx, 1);
+        updateCountsAndSummary();
+
+        if (state.activeId === id) {
+          const next = state.items[0] || null;
+          setActiveItem(next ? next.id : null);
+        } else {
+          renderHistoryList();
+        }
+      }
+
+      function renderHistoryList() {
+        updateFilterTabsUI();
+        const filtered =
+          state.activeFilter === 'ALL'
+            ? state.items
+            : state.items.filter((item) => item.formatTag === state.activeFilter);
+
+        els.historyCardsGrid.innerHTML = '';
+
+        if (filtered.length === 0) {
+          const emptyCard = document.createElement('div');
+          emptyCard.className = 'glass-panel col-span-full rounded-2xl p-6 text-center font-mono text-xs';
+          emptyCard.style.color = 'var(--text-muted)';
+          emptyCard.textContent = t('noHistoryFilter');
+          els.historyCardsGrid.appendChild(emptyCard);
+          return;
+        }
+
+        filtered.forEach((item) => {
+          const isActive = item.id === state.activeId;
+          const card = document.createElement('div');
+          card.className =
+            'glass-panel group relative flex cursor-pointer items-center gap-3.5 rounded-2xl p-4 transition-all';
+          if (isActive) {
+            card.style.borderColor = 'var(--accent)';
+            card.style.boxShadow = '0 0 0 2px var(--accent-soft), var(--glass-shadow)';
+          }
+
+          card.innerHTML = `
+            <div class="bg-checkerboard h-16 w-20 shrink-0 overflow-hidden rounded-xl border" style="border-color: var(--glass-border);">
+              <img src="${item.dataUrl}" alt="${item.name}" class="h-full w-full object-cover" />
+            </div>
+
+            <div class="min-w-0 flex-1">
+              <div class="flex items-center gap-1.5">
+                <p class="truncate text-xs font-bold sm:text-sm" style="color: var(--text-primary);">${item.name}</p>
+              </div>
+              <p class="mt-1 font-mono text-[11px] font-medium" style="color: var(--text-secondary);">
+                ${item.width}×${item.height} • ${formatSize(item.origSize)}
+              </p>
+              <div class="mt-1.5 flex items-center gap-2 font-mono text-[10px]">
+                <span class="rounded px-1.5 py-0.5 font-semibold" style="background: var(--accent-soft); color: var(--accent);">
+                  ${item.formatTag}
+                </span>
+                <span style="color: var(--text-muted);">${item.capturedAt}</span>
+              </div>
+            </div>
+
+            <div class="flex shrink-0 flex-col items-end gap-1.5">
+              <button
+                type="button"
+                data-action="remove"
+                title="Удалить"
+                class="btn-glass flex h-7 w-7 items-center justify-center rounded-lg font-mono text-sm font-bold hover:!border-rose-400 hover:!text-rose-500"
+              >
+                ×
+              </button>
+              <button
+                type="button"
+                data-action="quick-download"
+                title="Скачать"
+                class="btn-glass flex h-7 w-7 items-center justify-center rounded-lg"
+                style="color: var(--accent);"
+              >
+                <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.3">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                </svg>
+              </button>
+            </div>
+          `;
+
+          card.addEventListener('click', async (e) => {
+            const actionBtn = e.target.closest('[data-action]');
+            if (actionBtn) {
+              e.stopPropagation();
+              const action = actionBtn.dataset.action;
+              if (action === 'remove') {
+                removeHistoryItem(item.id);
+              } else if (action === 'quick-download') {
+                const res = await renderItemToBlob(item, {
+                  format: state.exportFormat,
+                  quality: state.quality,
+                  scale: 100,
+                  stripAlpha: state.exportFormat === 'image/jpeg',
+                  matteColor: state.matteColor,
+                });
+                const ext = mimeToExt(state.exportFormat);
+                const fname = `${item.name}.${ext}`;
+                triggerBlobDownload(res.blob, fname);
+                showToast(t('toastDownloaded', { name: fname }), 'success');
+              }
+              return;
+            }
+            setActiveItem(item.id);
+          });
+
+          els.historyCardsGrid.appendChild(card);
+        });
+      }
+
+      // ======================================================================
+      // 13. МОДАЛЬНОЕ ОКНО И ГОРЯЧИЕ КЛАВИШИ (CTRL+S, DELETE, ESC)
+      // ======================================================================
+      function openModal() {
+        els.guideModal.classList.remove('hidden');
+        els.guideModal.classList.add('flex');
+      }
+      function closeModal() {
+        els.guideModal.classList.add('hidden');
+        els.guideModal.classList.remove('flex');
+      }
+
+      els.guideModalBtn.addEventListener('click', openModal);
+      els.closeModalBtn.addEventListener('click', closeModal);
+      els.guideModal.addEventListener('click', (e) => {
+        if (e.target === els.guideModal) closeModal();
+      });
+
+      window.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+          closeModal();
+        }
+        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+          e.preventDefault();
+          downloadActiveImage();
+        }
+        if (e.key === 'Delete' && document.activeElement !== els.exportFilename) {
+          if (state.activeId) {
+            removeHistoryItem(state.activeId);
+          }
+        }
+      });
+
+      // ======================================================================
+      // 14. ИНИЦИАЛИЗАЦИЯ ПРИ ЗАПУСКЕ
+      // ======================================================================
+      applyTheme(state.theme);
+      updateBackdropUI();
+      updateZoomUI();
+      updateMatteUI();
+
+      const demoItem = createDemoSampleItem();
+      state.items.push(demoItem);
+      updateCountsAndSummary();
+      setActiveItem(demoItem.id);
+      applyLanguage(state.lang);
+    });
+  </script>
+</body>
+</html>
